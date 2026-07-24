@@ -17,10 +17,29 @@ try:
 
     dest_ip = '127.0.0.1'
     src_ip = '127.0.0.1'
+    src_port = 12345
+    dest_port = 7
+    data = b'Halo will shine'
+    udp_len = 8 + len(data)
+
+    udp_header = struct.pack('!HHHH', src_port, dest_port, udp_len, 0)
+
+    pseudo_header = struct.pack('!4s4sBBH',
+                                socket.inet_aton(src_ip),
+                                socket.inet_aton(dest_ip),
+                                0,
+                                socket.IPPROTO_UDP,
+                                udp_len)
+
+    pseudo_packet = pseudo_header + udp_header + data
+    udp_chksum = checksum(pseudo_packet)
+    udp_header = struct.pack('!HHHH', src_port, dest_port, udp_len, udp_chksum)
+
+    total_len = 20 + udp_len
     ip_header = struct.pack('!BBHHHBBH4s4s', #network byte order
                             4 << 4 | 5, #version | ihl 
                             0, # tos
-                            20 + 5, # total length (header + "hello")
+                            total_len, # total length (header + "hello")
                             54321, # id 
                             0, # frag_off
                             64, # ttl 
@@ -28,18 +47,16 @@ try:
                             0, # checksum placeholder
                             socket.inet_aton(src_ip),
                             socket.inet_aton(dest_ip))
-    data = b'hello'
-    packet = ip_header + data
 
-    chksum = checksum(packet)
+    ip_chksum = checksum(ip_header)
     ip_header = struct.pack('!BBHHHBBH4s4s',
-                            4 << 4 | 5, 0, 20+5, 54321, 0, 64,
-                            socket.IPPROTO_UDP, chksum, 
+                            4 << 4 | 5, 0, total_len, 54321, 0, 64,
+                            socket.IPPROTO_UDP, ip_chksum, 
                             socket.inet_aton(src_ip), socket.inet_aton(dest_ip))
-    packet = ip_header + data
 
+    packet = ip_header + udp_header +data
     sock.sendto(packet, (dest_ip, 0))
-    print("IP packet sent")
+    print("UDP packet sent")
 except socket.error as err:
     print(f"error: {err}")
     sys.exit(1)

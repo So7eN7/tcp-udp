@@ -10,7 +10,7 @@
 #include <time.h>
 
 // unsigned short was void* temp fix
-unsigned short checksum(unsigned short *b, int len) {
+unsigned short checksum(void *b, int len) {
   unsigned short *buf = b;
   unsigned int sum = 0;
   while (len > 1) {

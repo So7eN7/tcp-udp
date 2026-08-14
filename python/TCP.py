@@ -67,6 +67,49 @@ try:
 
     send_tcp_packet(send_sock, dest_ip, src_ip, src_port, dest_port, my_seq, my_ack, 16)
     print("ACK sent. Handshake complete")
+    
+    data = b'Hello TCP'
+    data_len = len(data)
+
+    send_tcp_packet(send_sock, dest_ip, src_ip, src_port, dest_port, my_seq, my_ack, 0x18, data)
+    my_seq += data_len
+    print(f"Data sent (seq={my_seq - data_len}, len={data_len})")
+
+    recv_sock.settimeout(3.0)
+    got_response = False
+
+    while not got_response:
+        try:
+            packet = recv_sock.recv(65535)
+        except socket.timeout:
+            print("Timeout waiting for response")
+            break
+        ip_header = packet[:20]
+        iph = struct.unpack('!BBHHHBBH4s4s', ip_header)
+        ihl = (iph[0] & 0x0F) * 4
+        protocol = iph[6]
+        if protocol != socket.IPPROTO_TCP:
+            continue
+
+        tcp_header = packet[ihl:ihl+20]
+        tcph = struct.unpack('!HHLLBBHHH', tcp_header)
+        rx_src_port, rx_dest_port, rx_seq, rx_ack_seq, doff_reserved, rx_flags = tcph[:6]
+        tcp_hdr_len = (doff_reserved >> 4) * 4 
+        if rx_src_port != dest_port or rx_dest_port != src_port:
+            continue
+        
+        if rx_flags & 0x10:
+            print(f"ACK received (ack_seq = {rx_ack_seq})")
+            my_ack = rx_seq + len(payload)
+        else:
+            my_ack = rx_seq
+
+        send_tcp_packet(send_sock, dest_ip, src_ip, src_port, dest_port, my_seq, my_ack, 0x10)
+        got_response = True
+    
+    if got_response:
+        print("Data received")
+
 
 except Exception as e:
     print(f"Error: {e}")

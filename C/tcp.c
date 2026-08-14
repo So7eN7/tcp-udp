@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
 
 unsigned short checksum(void *b, int len) {
   unsigned short *buf = b;
@@ -129,6 +130,99 @@ int main() {
   send_tcp_packet(send_sock, &dest, &iph, &tcph, NULL, 0);
   printf("ACK sent. Handshake complete\n");
 
+  char *data_str = "Hello TCP";
+  int data_len = strlen(data_str);
+
+  // Send data (PSH+ACK)
+  memset(&tcph, 0, sizeof(tcph));
+  tcph.source = htons(src_port);
+  tcph.dest = htons(dest_port);
+  tcph.seq = htonl(my_seq);
+  tcph.ack_seq = htonl(my_ack);
+  tcph.doff = 5;
+  tcph.ack = 1;
+  tcph.psh = 1;
+  tcph.window = htons(5840);
+  send_tcp_packet(send_sock, &dest, &iph, &tcph, data_str, data_len);
+  my_seq += data_len;
+  printf("Data sent (seq=%u, len=%d)\n", my_seq - data_len, data_len);
+
+  // 3-second timeout
+  struct timeval tv = { .tv_sec = 3, .tv_usec = 0 };
+  setsockopt(recv_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+  //char buffer[65536];
+  int got_response = 0;
+
+  while (!got_response) {
+      struct sockaddr_in from;
+      socklen_t fromlen = sizeof(from);
+
+      int len = recvfrom(recv_sock, buffer, sizeof(buffer), 0,
+                         (struct sockaddr *)&from, &fromlen);
+
+      if (len < 0) {
+          if (errno == EAGAIN || errno == EWOULDBLOCK) {
+              printf("→ Timeout (no packet received in 3 seconds)\n");
+              break;
+          }
+          perror("recvfrom");
+          continue;
+      }
+
+      // ---------- Debug: show every packet ----------
+      struct iphdr *rx_iph = (struct iphdr *)buffer;
+      printf("Got %d bytes  proto=%d  %s → %s\n",
+             len, rx_iph->protocol,
+             inet_ntoa(*(struct in_addr *)&rx_iph->saddr),
+             inet_ntoa(*(struct in_addr *)&rx_iph->daddr));
+
+      if (rx_iph->protocol != IPPROTO_TCP) continue;
+
+      // Make sure it is for our connection
+      if (rx_iph->saddr != iph.daddr || rx_iph->daddr != iph.saddr)
+          continue;
+
+      struct tcphdr *rx_tcph = (struct tcphdr *)(buffer + rx_iph->ihl * 4);
+
+      uint16_t sport = ntohs(rx_tcph->source);
+      uint16_t dport = ntohs(rx_tcph->dest);
+
+      printf("  TCP  %u → %u  flags=0x%02x  seq=%u  ack=%u\n",
+             sport, dport, rx_tcph->th_flags,
+             ntohl(rx_tcph->seq), ntohl(rx_tcph->ack_seq));
+
+      if (sport != dest_port || dport != src_port) continue;
+
+      // Accept any ACK (with or without data)
+      if (rx_tcph->ack) {
+          printf("→ Valid ACK received!\n");
+
+          int tcp_hdr_len = rx_tcph->doff * 4;
+          int payload_len = ntohs(rx_iph->tot_len) - (rx_iph->ihl * 4) - tcp_hdr_len;
+
+          if (payload_len > 0) {
+              char *data = buffer + rx_iph->ihl * 4 + tcp_hdr_len;
+              printf("  Payload (%d bytes): %.*s\n", payload_len, payload_len, data);
+              my_ack = ntohl(rx_tcph->seq) + payload_len;
+          } else {
+              my_ack = ntohl(rx_tcph->seq);
+          }
+
+          // Send our ACK back
+          memset(&tcph, 0, sizeof(tcph));
+          tcph.source   = htons(src_port);
+          tcph.dest     = htons(dest_port);
+          tcph.seq      = htonl(my_seq);
+          tcph.ack_seq  = htonl(my_ack);
+          tcph.doff     = 5;
+          tcph.ack      = 1;
+          tcph.window   = htons(5840);
+          send_tcp_packet(send_sock, &dest, &iph, &tcph, NULL, 0);
+
+          got_response = 1;
+      }
+  }  
   close(send_sock);
   close(recv_sock);
   return 0;

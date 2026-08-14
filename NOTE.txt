@@ -1,0 +1,8 @@
+IMPORTANT ABOUT TESTING AT THIS PHASE:
+
+If you run the C version of the TCP client the loop will not work :c
+
+Netcat and the kernel can really be annoying and the fix for it is not worth it. (Dropping RST flags)
+Just trust the python version since it works at this point c:
+
+Will fix this section too once I started working on a custom TCP server.
